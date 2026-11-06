@@ -147,7 +147,7 @@ def dashboard():
     with database() as connection:
         senders = connection.execute("SELECT * FROM senders ORDER BY message_count DESC, sender_name COLLATE NOCASE").fetchall()
     stats = {"senders": len(senders), "messages": sum(row["message_count"] for row in senders), "unsubscribe": sum(bool(row["has_unsubscribe"]) for row in senders)}
-    return render_template("dashboard.html", senders=senders, stats=stats)
+    return render_template("dashboard.html", senders=senders, stats=stats, gmail_connected=GMAIL_CREDENTIALS is not None)
 
 
 @app.route("/connect/gmail", methods=["POST"])
