@@ -8,6 +8,7 @@ from email.message import EmailMessage
 from email.header import decode_header, make_header
 import base64
 from urllib.parse import parse_qs, unquote, urlparse
+from html import unescape as html_unescape
 import imaplib
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ app.config["DATABASE"] = os.environ.get("INBOX_CLEANER_DATABASE", str(ROOT / "in
 GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.metadata", "https://www.googleapis.com/auth/gmail.send"]
 GMAIL_CREDENTIALS = None  # OAuth credentials live in memory only; restart to clear them.
 UNSUBSCRIBE_ACTIONS = {}  # Only in memory; header URLs and addresses are never written to SQLite.
+EMAIL_INSIGHTS = {}  # Short local summaries only; message previews are never persisted.
 
 
 @contextmanager
@@ -151,10 +153,12 @@ def scan_gmail_headers(service, limit=200):
     for message in messages[:limit]:
         result = service.users().messages().get(
             userId="me", id=message["id"], format="metadata",
-            metadataHeaders=["From", "List-Unsubscribe"],
+            metadataHeaders=["From", "Subject", "Date", "List-Unsubscribe"],
         ).execute()
         values = {h["name"].lower(): h["value"] for h in result.get("payload", {}).get("headers", [])}
-        headers.append({"From": values.get("from", ""), "List-Unsubscribe": values.get("list-unsubscribe", "")})
+        headers.append({"From": values.get("from", ""), "Subject": values.get("subject", ""),
+                        "Date": values.get("date", ""), "Snippet": result.get("snippet", ""),
+                        "List-Unsubscribe": values.get("list-unsubscribe", "")})
     return headers
 
 
@@ -169,14 +173,22 @@ def scan_icloud_headers(mailbox, app_password, limit=200):
         status, data = connection.search(None, "ALL")
         if status != "OK":
             raise RuntimeError("Could not list iCloud Inbox.")
-        for message_id in data[0].split()[-limit:]:
-            status, parts = connection.fetch(message_id, "(BODY.PEEK[HEADER.FIELDS (FROM LIST-UNSUBSCRIBE)])")
+        recent_ids = data[0].split()[-limit:]
+        for index, message_id in enumerate(recent_ids):
+            status, parts = connection.fetch(message_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE)])")
             if status != "OK":
                 continue
             for part in parts:
                 if isinstance(part, tuple):
                     parsed = BytesParser(policy=policy.default).parsebytes(part[1])
-                    headers.append({"From": str(parsed.get("From", "")), "List-Unsubscribe": str(parsed.get("List-Unsubscribe", ""))})
+                    row = {"From": str(parsed.get("From", "")), "Subject": str(parsed.get("Subject", "")),
+                           "Date": str(parsed.get("Date", "")), "Snippet": "",
+                           "List-Unsubscribe": str(parsed.get("List-Unsubscribe", ""))}
+                    if index >= max(0, len(recent_ids) - 30):
+                        body_status, body_parts = connection.fetch(message_id, "(BODY.PEEK[TEXT]<0.4096>)")
+                        if body_status == "OK":
+                            row["Snippet"] = next((part[1].decode("utf-8", "replace") for part in body_parts if isinstance(part, tuple)), "")
+                    headers.append(row)
     finally:
         try:
             connection.logout()
@@ -185,12 +197,50 @@ def scan_icloud_headers(mailbox, app_password, limit=200):
     return headers
 
 
+def build_email_insights(headers, provider, limit=30):
+    """Make transparent, local rule-based summaries from subjects and short previews."""
+    insights = []
+    for header in headers[-limit:]:
+        sender_name, sender_email = parseaddr(str(header.get("From", "")))
+        subject = re.sub(r"\s+", " ", str(header.get("Subject", ""))).strip() or "(No subject)"
+        preview = html_unescape(re.sub(r"<[^>]*>", " ", str(header.get("Snippet", ""))))
+        preview = re.sub(r"\s+", " ", preview).strip()
+        preview = preview[:340]
+        text = f"{subject} {preview}".lower()
+        renewal_terms = r"\b(renew(?:al)?|auto[ -]?renew|subscription|membership|expir(?:e|es|ed|ation|ing))\b"
+        if re.search(renewal_terms, text) and re.search(r"\b(due|soon|expires?|expired|expiring|action|required|renew|by \w+|payment method)\b", text):
+            category = "Renewal may need attention"
+            summary = "This message mentions a renewal or expiration and may need action. Check the date and terms in the original email."
+        elif re.search(renewal_terms, text):
+            category = "Subscription or renewal information"
+            summary = "This message appears to discuss a subscription, membership, or renewal. Check the original email for dates or required steps."
+        elif re.search(r"\b(invoice|payment|bill|balance due|receipt|charged|billing)\b", text):
+            category = "Payment or bill"
+            summary = "This message appears to relate to a bill, payment, or charge. Verify it directly with the company before paying."
+        elif re.search(r"\b(security|sign[ -]?in|password|verification|verify your account|suspicious|login alert)\b", text):
+            category = "Account or security notice"
+            summary = "This message appears to be an account or security notice. Open the service directly rather than using unexpected email links."
+        elif re.search(r"\b(order|shipping|shipment|delivery|delivered|tracking)\b", text):
+            category = "Order or delivery update"
+            summary = "This message appears to contain an order, shipping, or delivery update."
+        else:
+            category = "General message"
+            summary = "The subject and short preview do not clearly show a renewal or payment request. Open the original email to review it."
+        insights.append({"provider": provider, "sender": sender_name.strip() or sender_email,
+                         "sender_email": sender_email, "subject": subject,
+                         "date": str(header.get("Date", "")), "category": category,
+                         "summary": summary, "preview": preview})
+    return insights
+
+
 @app.route("/")
 def dashboard():
     with database() as connection:
         senders = connection.execute("SELECT * FROM senders ORDER BY message_count DESC, sender_name COLLATE NOCASE").fetchall()
     stats = {"senders": len(senders), "messages": sum(row["message_count"] for row in senders), "unsubscribe": sum(bool(row["has_unsubscribe"]) for row in senders)}
-    return render_template("dashboard.html", senders=senders, stats=stats, gmail_connected=GMAIL_CREDENTIALS is not None, unsubscribe_actions=UNSUBSCRIBE_ACTIONS)
+    insights = [item for group in EMAIL_INSIGHTS.values() for item in group]
+    insights.sort(key=lambda item: item.get("date", ""), reverse=True)
+    return render_template("dashboard.html", senders=senders, stats=stats, gmail_connected=GMAIL_CREDENTIALS is not None, unsubscribe_actions=UNSUBSCRIBE_ACTIONS, email_insights=insights[:60])
 
 
 def send_gmail_unsubscribe(mailbox, recipient, subject, body):
@@ -273,7 +323,9 @@ def connect_gmail():
         GMAIL_CREDENTIALS = flow.run_local_server(port=0, open_browser=True, access_type="offline")
         service = gmail_service()
         mailbox = service.users().getProfile(userId="me").execute()["emailAddress"]
-        save_scan("Gmail", mailbox, normalize_sender_rows(scan_gmail_headers(service), "Gmail", mailbox))
+        headers = scan_gmail_headers(service)
+        save_scan("Gmail", mailbox, normalize_sender_rows(headers, "Gmail", mailbox))
+        EMAIL_INSIGHTS[("Gmail", mailbox)] = build_email_insights(headers, "Gmail")
         flash(f"Header scan finished for {mailbox}. No message bodies were read. Unsubscribe emails require your review and confirmation.", "success")
     except Exception:
         GMAIL_CREDENTIALS = None
@@ -286,7 +338,9 @@ def rescan_gmail():
     try:
         service = gmail_service()
         mailbox = service.users().getProfile(userId="me").execute()["emailAddress"]
-        save_scan("Gmail", mailbox, normalize_sender_rows(scan_gmail_headers(service), "Gmail", mailbox))
+        headers = scan_gmail_headers(service)
+        save_scan("Gmail", mailbox, normalize_sender_rows(headers, "Gmail", mailbox))
+        EMAIL_INSIGHTS[("Gmail", mailbox)] = build_email_insights(headers, "Gmail")
         flash(f"Gmail scan refreshed for {mailbox}.", "success")
     except Exception:
         flash("Could not refresh Gmail. Reconnect and try again.", "error")
@@ -303,6 +357,7 @@ def connect_icloud():
     try:
         headers = scan_icloud_headers(mailbox, app_password)
         save_scan("iCloud", mailbox, normalize_sender_rows(headers, "iCloud", mailbox))
+        EMAIL_INSIGHTS[("iCloud", mailbox)] = build_email_insights(headers, "iCloud")
         flash(f"Read-only header scan finished for {mailbox}. Your app-specific password was not saved.", "success")
     except Exception:
         flash("iCloud could not connect. Check the address, app-specific password, and two-factor authentication.", "error")
@@ -319,6 +374,7 @@ def disconnect():
         abort(400)
     with database() as connection:
         connection.execute("DELETE FROM senders WHERE provider=? AND mailbox=?", (provider, mailbox))
+    EMAIL_INSIGHTS.pop((provider, mailbox), None)
     if provider == "Gmail":
         GMAIL_CREDENTIALS = None
     flash(f"Removed saved {provider} scan results for {mailbox} from this computer.", "success")
@@ -331,6 +387,8 @@ def clear_data():
     with database() as connection:
         connection.execute("DELETE FROM senders")
     GMAIL_CREDENTIALS = None
+    EMAIL_INSIGHTS.clear()
+    UNSUBSCRIBE_ACTIONS.clear()
     flash("All saved sender summaries were removed from this computer.", "success")
     return redirect(url_for("dashboard"))
 
