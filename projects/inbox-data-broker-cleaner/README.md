@@ -4,13 +4,16 @@ A local Python app for reviewing repeat email senders and unsubscribe options fo
 
 ## What it does
 
-- Checks up to 200 recent Inbox messages for `From` and `List-Unsubscribe` headers; it does not read message bodies.
+- Scans up to 200 recent Inbox messages for sender and unsubscribe headers.
+- Creates on-device, rule-based summaries for recent messages from email subjects and short previews. It flags possible renewals, bills, security notices, and delivery updates.
 - Shows an unsubscribe link from the header when one is available. The link opens in a new browser tab; the app does not visit it automatically.
 - For a `mailto:` unsubscribe option, shows the recipient, subject, and exact message before sending. You must check a confirmation box and press **Send unsubscribe request** for each sender.
 - Stores sender summaries and a sent timestamp locally. Header URLs and unsubscribe email addresses stay in memory and are not stored in the database.
 - Includes general guidance for handling data broker removal requests manually.
 
-The message is a firm request to stop marketing emails. It says continued messages may be reported or discussed with a legal adviser; it does not threaten a guaranteed lawsuit. Unsubscribe systems differ, and a sender may provide a web link instead of an email address. In the United States, the FTC says covered commercial senders must honor opt-out requests within 10 business days; this app cannot guarantee a sender's response.
+Email summaries use simple local pattern analysis, not an online generative AI service. Gmail provides a short message snippet with its metadata; iCloud previews read at most 4 KB of text for each of the 30 most recent messages. The preview and summary stay in memory and disappear when the app stops. The app does not save or send message previews to an AI provider. These summaries are clues, may be wrong or incomplete, and should not replace checking the original message.
+
+The unsubscribe message is a firm request to stop marketing emails. It says continued messages may be reported or discussed with a legal adviser; it does not threaten a guaranteed lawsuit. Unsubscribe systems differ, and a sender may provide a web link instead of an email address. In the United States, the FTC says covered commercial senders must honor opt-out requests within 10 business days; this app cannot guarantee a sender's response.
 
 Gmail credentials are held in memory and cleared when the app stops. The iCloud app-specific password is requested again only when sending and is not saved. The local report contains sender and mailbox addresses, so keep this folder private.
 
@@ -32,7 +35,7 @@ Gmail credentials are held in memory and cleared when the app stops. The iCloud 
 
 ## Gmail setup
 
-Gmail requires two OAuth permissions: `gmail.metadata` for headers and `gmail.send` to send only the unsubscribe request you confirm. Google classifies `gmail.send` as sensitive. For personal testing, configure an OAuth consent screen and add your Gmail address as a test user.
+Gmail uses `gmail.metadata` for headers/snippets and `gmail.send` to send only the unsubscribe request you confirm. Both are requested through Google OAuth. Google classifies metadata as a restricted scope and send as sensitive. For personal testing, configure an OAuth consent screen and add your Gmail address as a test user.
 
 1. In the [Google Cloud Console](https://console.cloud.google.com/), select your project and enable Gmail API.
 2. Under **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/gmail.metadata` and `https://www.googleapis.com/auth/gmail.send`.
