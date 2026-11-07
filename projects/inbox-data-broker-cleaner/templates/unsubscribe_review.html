@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Review unsubscribe request</title><link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}"></head>
+<body>
+  <header><a class="brand" href="{{ url_for('dashboard') }}"><span class="logo">I</span><span>INBOX CLEANER<small>PRIVATE · LOCAL · REVIEW FIRST</small></span></a><span class="local"><i></i>This app runs on your computer</span></header>
+  <main class="review-main">
+    <a class="back-link" href="{{ url_for('dashboard') }}">← Back to your report</a>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="notice {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="card review-card">
+      <p class="eyebrow">CHECK BEFORE SENDING</p><h1>Unsubscribe request</h1>
+      {% if sent %}<div class="notice success">A request has already been sent for this sender.</div>{% else %}
+      <p class="review-intro">Read the details below. Nothing is sent until you check the box and press the send button.</p>
+      <dl class="review-details"><div><dt>Sender</dt><dd>{{ sender.sender_name }} ({{ sender.sender_email }})</dd></div><div><dt>Mailbox</dt><dd>{{ sender.mailbox }} · {{ sender.provider }}</dd></div><div><dt>Recipient</dt><dd>{{ action.mailto }}</dd></div><div><dt>Subject</dt><dd>{{ action.subject }}</dd></div></dl>
+      <label class="message-label" for="message-preview">Email message</label><pre id="message-preview" class="message-preview">{{ body }}</pre>
+      <form method="post" class="send-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if sender.provider == 'iCloud' %}<label for="app_password">Apple app-specific password (needed only to send)</label><input id="app_password" type="password" name="app_password" autocomplete="off" required><small class="hint">This is not your normal Apple Account password. It is used for this send and is not saved.</small>{% endif %}
+        <label class="confirm-label"><input type="checkbox" name="confirm_send" value="yes" required> I reviewed the recipient and message. Send this request now.</label>
+        <button class="button" type="submit">Send unsubscribe request</button>
+      </form>
+      {% endif %}
+    </section>
+  </main>
+</body></html>
+
