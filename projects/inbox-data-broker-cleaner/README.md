@@ -1,21 +1,23 @@
 # Inbox & Data Broker Cleaner
 
-A local Python app for reviewing repeat email senders and unsubscribe availability. It can connect to **Gmail** and **iCloud Mail**. It runs on your computer; it is not hosted on GitHub Pages.
+A local Python app for reviewing repeat email senders and unsubscribe options for **Gmail** and **iCloud Mail**. It runs on your computer; it is not hosted on GitHub Pages.
 
 ## What it does
 
-- Connects to Gmail with Google's authorization window, or to iCloud Mail with an Apple app-specific password.
-- Checks up to 200 recent Inbox messages for the `From` and `List-Unsubscribe` headers.
-- Shows repeat senders and a link back to the provider's inbox so you can review and unsubscribe yourself.
-- Stores a small sender summary in a local SQLite file.
+- Checks up to 200 recent Inbox messages for `From` and `List-Unsubscribe` headers; it does not read message bodies.
+- Shows an unsubscribe link from the header when one is available. The link opens in a new browser tab; the app does not visit it automatically.
+- For a `mailto:` unsubscribe option, shows the recipient, subject, and exact message before sending. You must check a confirmation box and press **Send unsubscribe request** for each sender.
+- Stores sender summaries and a sent timestamp locally. Header URLs and unsubscribe email addresses stay in memory and are not stored in the database.
 - Includes general guidance for handling data broker removal requests manually.
 
-It does **not** read message bodies or subjects, save the unsubscribe link/token, send unsubscribe messages, contact data brokers, or upload your mailbox data. Gmail OAuth credentials are held in memory only and are cleared when the app stops. The iCloud app-specific password is not written to the database or a file. The report contains personal sender and mailbox addresses, so keep the project folder private.
+The message is a firm request to stop marketing emails. It says continued messages may be reported or discussed with a legal adviser; it does not threaten a guaranteed lawsuit. Unsubscribe systems differ, and a sender may provide a web link instead of an email address. In the United States, the FTC says covered commercial senders must honor opt-out requests within 10 business days; this app cannot guarantee a sender's response.
+
+Gmail credentials are held in memory and cleared when the app stops. The iCloud app-specific password is requested again only when sending and is not saved. The local report contains sender and mailbox addresses, so keep this folder private.
 
 ## Run locally on Windows
 
-1. Download the portfolio repository ZIP from GitHub using **Code → Download ZIP**, then use **Extract All**.
-2. Open the extracted folder, then open `projects\inbox-data-broker-cleaner`.
+1. Download the portfolio ZIP from GitHub using **Code → Download ZIP**, then choose **Extract All**.
+2. Open `projects\inbox-data-broker-cleaner` in the extracted folder.
 3. Click File Explorer's address bar, type `powershell`, and press **Enter**.
 4. Run these commands one at a time:
 
@@ -28,43 +30,41 @@ It does **not** read message bodies or subjects, save the unsubscribe link/token
 5. Leave PowerShell open and visit **http://127.0.0.1:5050** in Chrome.
 6. When finished, press **Ctrl+C** in PowerShell. Gmail authorization must be repeated the next time the app starts.
 
-## Set up Gmail
+## Gmail setup
 
-This app uses Google's OAuth flow and requests only the Gmail `gmail.metadata` scope. This scope can access message metadata and headers, not message bodies. Google classifies it as a restricted scope; for personal testing, configure an OAuth consent screen and add your own Google account as a test user.
+Gmail requires two OAuth permissions: `gmail.metadata` for headers and `gmail.send` to send only the unsubscribe request you confirm. Google classifies `gmail.send` as sensitive. For personal testing, configure an OAuth consent screen and add your Gmail address as a test user.
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable the Gmail API.
-2. Configure the OAuth consent screen. If prompted for an audience, select **External** and add your Gmail address as a test user.
-3. Create an OAuth client ID with application type **Desktop app**.
-4. Download its JSON file. Put it in this project folder and rename it to `credentials.json`.
-5. Start the app, click **Continue with Google**, and approve the requested metadata-only access.
+1. In the [Google Cloud Console](https://console.cloud.google.com/), select your project and enable Gmail API.
+2. Under **Google Auth Platform → Data Access**, add `https://www.googleapis.com/auth/gmail.metadata` and `https://www.googleapis.com/auth/gmail.send`.
+3. Under **Audience**, keep the app in testing and add the Gmail account you will use as a test user.
+4. Keep the existing Desktop OAuth client and `credentials.json` in this project folder. No new client file is required just for the added scope.
+5. Restart the app, click **Continue with Google**, and approve the updated permissions. If Google does not show the new permission, remove the app's existing access from your Google Account security settings, then reconnect.
 
-Keep `credentials.json` private. It is excluded by this folder's `.gitignore`; never upload it or paste its contents into chat. Google may show a warning for your own unverified test app.
+Keep `credentials.json` private. It is excluded by `.gitignore`; do not upload it or share its contents. Google may show a warning for your own unverified test app. The app's local OAuth authorization is held in memory and ends when you stop the app.
 
-Official Google instructions: [Gmail API Python quickstart](https://developers.google.com/workspace/gmail/api/quickstart/python) and [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
+Official instructions: [Gmail API Python quickstart](https://developers.google.com/workspace/gmail/api/quickstart/python), [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), and [Gmail send API](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/send).
 
-## Set up iCloud Mail
+## iCloud Mail setup
 
-1. Make sure two-factor authentication is enabled for your Apple Account.
-2. Create an **app-specific password** in your Apple Account settings.
-3. In the local app, enter your full iCloud email and that app-specific password, then select **Scan iCloud inbox**.
-4. Do not enter your normal Apple Account password.
+1. Enable two-factor authentication for your Apple Account and create an app-specific password.
+2. Enter your iCloud address and app-specific password to scan. Never enter your regular Apple Account password.
+3. When sending an unsubscribe email, enter the app-specific password again on the review page. It is not saved.
 
-The app uses Apple's iCloud IMAP server over SSL and selects the Inbox in read-only mode. The app-specific password is used for the scan and is not saved. Apple instructions: [app-specific passwords](https://support.apple.com/en-us/102654) and [iCloud Mail server settings](https://support.apple.com/en-us/102525).
+The app scans over read-only IMAP, then sends only after your confirmation using Apple's SMTP server. Official instructions: [app-specific passwords](https://support.apple.com/en-us/102654) and [iCloud Mail server settings](https://support.apple.com/en-us/102525).
 
 ## Local data and privacy
 
-The report database is `instance/inbox_cleaner.sqlite3` inside this folder. It stores mailbox address, sender name/address/domain, message count, whether an unsubscribe header was present, and scan time. It does not store subjects, message bodies, or unsubscribe URLs. Use **Clear saved results** in the app to remove the report, or stop the app and delete that database file.
+The database is `instance/inbox_cleaner.sqlite3`. It stores mailbox, sender name/address/domain, message count, whether the scan saw an unsubscribe header, scan time, and the local time an unsubscribe request was sent. It does not store subjects, message bodies, unsubscribe addresses, or unsubscribe URLs. Those header actions are held in memory until the app is stopped; after restarting, rescan the mailbox to restore action buttons. Use **Clear saved results** in the app to remove the report.
 
-The app binds only to `127.0.0.1` and is intended for your computer. Do not expose it to the internet or use it as a shared service. Unsubscribe and data removal actions stay under your control.
+The app binds only to `127.0.0.1`. Do not expose it to the internet or use it as a shared service.
 
 ## Data broker requests
 
-This demo does not search data broker sites or submit requests. Visit each broker's official privacy page, follow its current removal steps, and record confirmations privately. The app links to [FTC online privacy guidance](https://consumer.ftc.gov/articles/how-protect-your-privacy-online).
+This demo does not search broker sites or submit removal requests. Visit each broker's official privacy page and record confirmations privately. See [FTC online privacy guidance](https://consumer.ftc.gov/articles/how-protect-your-privacy-online).
 
-## Run the local checks
+## Local checks
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Four local checks cover the dashboard, header-only sender summaries, not saving the iCloud password, and rejecting form submissions without a valid CSRF token. The checks use sample data; they do not sign in to a real mailbox.
