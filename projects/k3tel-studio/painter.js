@@ -1,0 +1,24 @@
+import {SURFACES,layerBounds} from './state.js';
+export class SurfacePainter{
+ constructor(onImage){this.onImage=onImage;this.images=new Map();this.loading=new Set();this.canvases={};for(const s of SURFACES){const c=document.createElement('canvas');c.width=c.height=1024;this.canvases[s]=c;}}
+ async prepareImage(layer){const key=layer.src+'|'+!!layer.removeWhite;if(this.images.has(key)||this.loading.has(key))return;this.loading.add(key);try{const im=new Image();im.src=layer.src;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(im,0,0);if(layer.removeWhite){const pixels=ctx.getImageData(0,0,c.width,c.height);const data=pixels.data,w=c.width,h=c.height,seen=new Uint8Array(w*h),queue=new Int32Array(w*h);let head=0,tail=0;const visit=i=>{if(i<0||i>=w*h||seen[i])return;seen[i]=1;const k=i*4,m=Math.min(data[k],data[k+1],data[k+2]),mx=Math.max(data[k],data[k+1],data[k+2]);if(m>200&&mx-m<40){queue[tail++]=i;data[k+3]=0;}};for(let x=0;x<w;x++){visit(x);visit((h-1)*w+x);}for(let y=0;y<h;y++){visit(y*w);visit(y*w+w-1);}while(head<tail){const i=queue[head++],x=i%w;if(x>0)visit(i-1);if(x<w-1)visit(i+1);visit(i-w);visit(i+w);}ctx.putImageData(pixels,0,0);}this.images.set(key,c);this.onImage();}catch{this.images.set(key,null);}finally{this.loading.delete(key);}}
+ pattern(ctx,s,side){const c=this.canvases[side],N=1024,base=['left','right'].includes(side)?s.secondary:s.base;ctx.clearRect(0,0,N,N);ctx.fillStyle=base;ctx.fillRect(0,0,N,N);const count=s.patternScale,cell=N/count;ctx.fillStyle=s.trim;ctx.globalAlpha=.85;
+ if(s.pattern==='stripes')for(let i=0;i<count;i++)ctx.fillRect(0,i*cell,N,cell*.38);
+ if(s.pattern==='pinstripe')for(let i=0;i<count*2;i++)ctx.fillRect(i*cell/2,0,3,N);
+ if(s.pattern==='checker')for(let y=0;y<count;y++)for(let x=0;x<count;x++)if((x+y)%2===0)ctx.fillRect(x*cell,y*cell,cell,cell);
+ if(s.pattern==='dots')for(let y=0;y<count;y++)for(let x=0;x<count;x++){ctx.beginPath();ctx.arc((x+.5)*cell,(y+.5)*cell,cell*.12,0,Math.PI*2);ctx.fill();}
+ if(s.pattern==='camo'){let seed=1975;const rand=()=>{seed=(seed*16807)%2147483647;return(seed-1)/2147483646;};for(let i=0;i<count*count*2;i++){ctx.fillStyle=[s.secondary,s.trim,'#18251d'][i%3];ctx.globalAlpha=.55;const x=rand()*N,y=rand()*N,r=cell*(.25+rand()*.5);ctx.beginPath();for(let k=0;k<9;k++){const a=k/9*Math.PI*2,rr=r*(.6+rand()*.6);const px=x+Math.cos(a)*rr,py=y+Math.sin(a)*rr;k?ctx.lineTo(px,py):ctx.moveTo(px,py);}ctx.closePath();ctx.fill();}}
+ ctx.globalAlpha=1;
+ // Fine fiber lines remain subtle so artwork stays readable.
+ ctx.globalAlpha=s.material==='denim'?.13:s.material==='cotton'?.035:.02;ctx.strokeStyle='#ffffff';ctx.lineWidth=1;ctx.beginPath();for(let i=-N;i<N*2;i+=6){ctx.moveTo(i,0);ctx.lineTo(i-N,N);}ctx.stroke();ctx.globalAlpha=1;
+ }
+ drawLayer(ctx,l){if(!l.visible)return;const N=1024;ctx.save();ctx.translate(l.x/100*N,l.y/100*N);ctx.rotate(l.rotation*Math.PI/180);ctx.globalAlpha=l.opacity/100;const {width,height}=layerBounds(l,this.images,N);
+ if(l.type==='text'){const lines=l.text.split('\n');const n=Math.max(...lines.map(x=>x.length),1),fontSize=Math.min(230,width/Math.max(1,n*.58));ctx.font=`${l.font==='Impact'?'':'bold '}${fontSize}px "${l.font}"`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=l.color;lines.forEach((text,i)=>ctx.fillText(text,0,(i-(lines.length-1)/2)*fontSize*1.16,width));}
+ else{const image=this.images.get(l.src+'|'+!!l.removeWhite);if(image)ctx.drawImage(image,-width/2,-height/2,width,height);else this.prepareImage(l);}
+ ctx.restore();
+ }
+ paint(s){for(const side of SURFACES){const ctx=this.canvases[side].getContext('2d');this.pattern(ctx,s,side);for(const l of s.layers)if(l.surface===side)this.drawLayer(ctx,l);}}
+ paintEditor(canvas,side,selected){const ctx=canvas.getContext('2d'),N=canvas.width;ctx.clearRect(0,0,N,N);ctx.drawImage(this.canvases[side],0,0,N,N);ctx.save();ctx.strokeStyle='#ffffff50';ctx.lineWidth=1;ctx.setLineDash([3,5]);ctx.strokeRect(N*.08,N*.08,N*.84,N*.84);ctx.beginPath();ctx.moveTo(N*.5,0);ctx.lineTo(N*.5,N);ctx.moveTo(0,N*.5);ctx.lineTo(N,N*.5);ctx.stroke();ctx.setLineDash([]);if(selected&&selected.surface===side&&selected.visible){const b=layerBounds(selected,this.images,N);ctx.translate(selected.x/100*N,selected.y/100*N);ctx.rotate(selected.rotation*Math.PI/180);ctx.strokeStyle='#c3f38d';ctx.lineWidth=2;ctx.shadowColor='#14251d';ctx.shadowBlur=2;ctx.strokeRect(-b.width/2-4,-b.height/2-4,b.width+8,b.height+8);ctx.fillStyle='#e1ffbf';for(const x of [-1,1])for(const y of [-1,1])ctx.fillRect(x*(b.width/2+4)-3,y*(b.height/2+4)-3,6,6);}ctx.restore();}
+ hitLayer(x,y,l){const angle=-l.rotation*Math.PI/180,dx=(x-l.x)/100*1024,dy=(y-l.y)/100*1024;const px=dx*Math.cos(angle)-dy*Math.sin(angle),py=dx*Math.sin(angle)+dy*Math.cos(angle);const b=layerBounds(l,this.images);return Math.abs(px)<b.width/2+15&&Math.abs(py)<b.height/2+15;}
+}
+
